@@ -1,0 +1,675 @@
+
+## 512 Project
+#### Team: Chenxi Liu, Yuan Liu, Qian Yi, Jingyu Zhang
+
+
+```{r}
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(factoextra)
+library(tree)
+library(randomForest)
+library(class)
+library (glmnet)
+library(corrplot)
+library(GGally)
+library(tidyverse)
+library(cluster) 
+```
+
+### EDA
+
+```{r}
+wine=read.csv("wine_white.csv")
+summary(wine)
+head(wine)
+```
+
+```{r}
+pairs(quality~.,data=wine, main="simple scatterplot matrix")
+```
+
+```{r}
+corr=cor(wine)
+corrplot(corr, method="circle")
+wine$quality =as.factor(wine$quality)
+```
+
+
+```{r}
+wine %>%
+  mutate(quality = as.factor(quality)) %>%
+  select(-c(residual.sugar, free.sulfur.dioxide, total.sulfur.dioxide, chlorides)) %>% 
+  ggpairs(aes(color = quality, alpha = 0.4),
+          columns = 1:7,
+          lower = list(continuous = "points"),
+          upper = list(continuous = "blank"), 
+          axisLabels = "none", switch = "both")
+```
+
+```{r}
+library(plotly)
+library(viridis)
+wine %>% 
+
+  plot_ly(x=~alcohol,y=~volatile.acidity,z= ~sulphates, color=~quality, hoverinfo = 'text', colors = viridis(3),
+
+          text = ~paste('Quality:', quality,
+
+                        '<br>Alcohol:', alcohol,
+
+                        '<br>Volatile Acidity:', volatile.acidity,
+
+                        '<br>sulphates:', sulphates)) %>% 
+
+  add_markers(opacity = 0.8) %>%
+
+  layout(title = "3D Wine Quality",
+
+         annotations=list(yref='paper',xref="paper",y=1.05,x=1.1, text="quality",showarrow=F), scene = list(xaxis = list(title = 'Alcohol'),
+
+                      yaxis = list(title = 'Volatile Acidity'),
+
+                      zaxis = list(title = 'sulphates')))
+```
+
+```{r}
+#Distribution of wine quality ratings
+ggplot(wine, aes(x = quality)) +
+geom_bar(stat = "count",position = "dodge") + ggtitle("Distribution of Wine Quality Ratings") + theme_classic()
+```
+
+
+### Clustering
+
+#### Data Loading
+
+```{r}
+data = read.csv("wine_white.csv")
+head(data)
+summary(data)
+```
+
+#### K-Means Clustering
+
+
+##### Elbow Method
+```{r}
+df = data.frame(scale(data[1:11])) #scale dataset
+df = na.omit(df)
+head(df)
+summary(df)
+
+wss <- (nrow(df)-1)*sum(apply(df,2,var))
+  for (i in 2:15) wss[i] <- sum(kmeans(df, centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters",
+     ylab="Within-cluster sum of squares")
+
+```
+
+
+#####  Average Silhouette Method
+
+```{r}
+silhouette_score <- function(k){
+  km <- kmeans(df, centers = k, nstart=20, iter.max=50)
+  ss <- silhouette(km$cluster, dist(df))
+  mean(ss[, 3])
+}
+k <- 2:10
+avg_sil <- sapply(k, silhouette_score)
+plot(k, type='b', avg_sil, xlab='Number of clusters', ylab='Average Silhouette Scores', frame=FALSE)
+fviz_nbclust(df, kmeans, method='silhouette')
+```
+
+
+
+##### Gap Statistic Method
+
+```{r}
+# compute gap statistic
+set.seed(123)
+gap_stat <- clusGap(df, FUN = kmeans, nstart = 25,
+                    K.max = 10, B = 50, iter.max=50)
+# Print the result
+print(gap_stat, method = "firstmax")
+fviz_gap_stat(gap_stat)
+```
+
+##### K-Means Result
+
+```{r}
+set.seed(2020)
+km.out1=kmeans(df,2,nstart=20)
+km.out1$tot.withinss
+fviz_cluster(km.out1, data = df)
+```
+
+
+
+
+
+#### Hierarchical Clustering
+
+```{r}
+## ramdomly select 5 rows from each quality degree
+d3 = data[data$quality == 3, ]
+d3 = d3[sample(nrow(d3), 5), ]
+d3
+
+d4 = data[data$quality == 4, ]
+d4 = d4[sample(nrow(d4), 5), ]
+d4
+
+d5 = data[data$quality == 5, ]
+d5 = d5[sample(nrow(d5), 5), ]
+d5
+
+d6 = data[data$quality == 6, ]
+d6 = d6[sample(nrow(d6), 5), ]
+d6
+
+
+d7 = data[data$quality == 7, ]
+d7 = d7[sample(nrow(d7), 5), ]
+d7
+
+
+d8 = data[data$quality == 8, ]
+d8 = d8[sample(nrow(d8), 5), ]
+d8
+
+
+d9 = data[data$quality == 9, ]
+d9 = d9[sample(nrow(d9), 5), ]
+d9
+
+new_df = rbind(d3,d4,d5,d6,d7,d8,d9)
+new_df = new_df[1:11]
+new_df
+```
+
+
+```{r}
+hc.complete=hclust(dist(new_df), method="complete")
+plot(hc.complete,main="Complete Linkage", xlab="index of selected row", sub="", cex =.9)
+
+hc.average=hclust(dist(new_df), method="average") 
+plot(hc.average , main="Average Linkage", xlab="index of selected row", sub="", cex =.9)
+
+hc.single=hclust(dist(new_df), method="single")
+plot(hc.single , main="Single Linkage", xlab="index of selected row", sub="", cex =.9)
+```
+
+
+
+
+### Decision Tree
+
+#### Data Preparation
+
+```{r}
+data = read.csv("wine_white.csv")
+head(data)
+#summary(data)
+```
+
+```{r}
+set.seed(210)
+table(data$quality)
+### we can see there the data is imbalanced.
+### to deal with this data imbalance we will use oversampling 
+data <- data[sample(1:nrow(data),nrow(data),prob = ifelse(data$quality == c("9","3"), 0.95 , 0.10), replace = TRUE),]
+table(data$quality)
+```
+
+######### split into 3 clusters: 
+######### if quality < 5 -> low; 
+######### if 6 <= quality < 7 -> median; 
+######### if quality >= 7 -> high
+
+```{r}
+library(dplyr)
+library(caret)
+library(tree)
+data = data %>% mutate(quality_degree = case_when(quality >= 7 ~ 'High', quality >= 5 ~ 'Mid', TRUE ~ 'Low'))
+data=data[, c(1:11, 13)]
+data$quality_degree=as.factor(data$quality_degree)
+summary(data)
+```
+
+```{r}
+# splid the data into training and testing 
+set.seed(13)
+#dim(data)
+training_index=sample(1:dim(data)[1], dim(data)[1]*0.8)
+testing_index=-training_index
+
+training_set=data[training_index, ]
+testing_set=data[testing_index, ]
+summary(training_set)
+```
+#### Build Decision Tree Model
+
+```{r}
+set.seed(13)
+#dim(data)
+training_index=sample(1:dim(data)[1], dim(data)[1]*0.8)
+testing_index=-training_index
+
+training_set=data[training_index, ]
+testing_set=data[testing_index, ]
+summary(training_set)
+```
+
+```{r}
+tree.wine = tree(quality_degree~., data=training_set)
+summary(tree.wine)
+# the training error rate is 0.2422
+# there are 10 terminal nodes 
+```
+
+#### Plot Tree
+
+```{r}
+plot(tree.wine)
+text(tree.wine, pretty=0)
+
+```
+
+
+#### Decission Tree Evaluation Using Test Set 
+
+```{r}
+set.seed(213)
+pred = predict(tree.wine, testing_set, type = "class")
+caret::confusionMatrix(pred, testing_set$quality_degree)
+# accuracy: 0.752 
+```
+
+#### Purning Tree
+```{r}
+set.seed(11)
+cross_validation_tree =cv.tree(tree.wine ,FUN=prune.misclass )
+names(cross_validation_tree)
+cross_validation_tree # dev corresponds to the cross-validation error rate in this instance
+```
+
+```{r}
+plot(cross_validation_tree$size,cross_validation_tree$dev ,type="b")
+```
+
+
+
+```{r}
+# We now apply the prune.misclass() function in order to prune the tree to prune.obtain the five-node tree.
+# print out the best tree node size
+cross_validation_tree$size[which.min(cross_validation_tree$dev)]
+prune.wine =prune.misclass (tree.wine, best =cross_validation_tree$size[which.min(cross_validation_tree$dev)])
+plot(prune.wine)
+text(prune.wine,pretty =0)
+```
+
+#### Purned Tree Evaluation
+
+```{r}
+purn.pred=predict(prune.wine, testing_set, type="class")
+
+# Calculate the accuracy: 
+caret::confusionMatrix(purn.pred, testing_set$quality_degree)
+# Accoring to the results, the purned tree have same accuracy as the original tree
+# using the purining method, we could make this tree less complicated while keeping the accuracy 
+```
+
+
+
+### Random Froest 
+
+```{r}
+set.seed(213)
+rf1=randomForest(quality_degree ~.,data=training_set, mtry=4, importance=TRUE, ntree=500)
+summary(rf1)
+```
+
+#### Random Forest Evaluation Using Test Set 
+
+```{r}
+predict_rf = predict(rf1, newdata = testing_set)
+# calculate the accuracy and error rate 
+accuracy=mean(testing_set$quality_degree == predict_rf)
+error=mean(testing_set$quality_degree != predict_rf)
+# print out the accuracy and error rate 
+cat('accuracy is ', accuracy, "\n")
+cat('error rate is ', error)
+```
+
+
+#### Bagging 
+
+```{r}
+set.seed(210)
+rf2=randomForest(quality_degree ~.,data=training_set, mtry=11, importance=TRUE, ntree=500)
+summary(rf2)
+
+predict_rf2 = predict(rf2, newdata = testing_set)
+# calculate the accuracy and error rate 
+accuracy=mean(testing_set$quality_degree == predict_rf2)
+error=mean(testing_set$quality_degree != predict_rf2)
+# print out the accuracy and error rate 
+cat('accuracy is ', accuracy, "\n")
+cat('error rate is ', error)
+```
+
+#### Find the importance of variables 
+
+```{r}
+importance(rf2)
+```
+
+```{r}
+varImpPlot(rf2)
+```
+
+### GAM model 
+```{r}
+library(dplyr)
+library(gam)
+```
+
+#### Read the data 
+```{r}
+data = read.csv("wine_white.csv")
+# step 1: resample the data 
+set.seed(213)
+table(data$quality)
+data <- data[sample(1:nrow(data),nrow(data),prob = ifelse(data$quality == c("9","3"), 0.95 , 0.10), replace = TRUE),]
+table(data$quality)
+
+# step 2: split the categorical labels into 2 group: Above_Average and Below_Average
+data = data %>% mutate(quality_degree = case_when(quality >= 6 ~ 'Above_Average', TRUE ~ 'Below_Average'))
+data=data[, c(1:11, 13)]
+data$quality_degree=as.factor(data$quality_degree)
+```
+
+#### GAM method 1: GAM model with 3 most important variables 
+```{r}
+df_gam=data[, c("alcohol", "volatile.acidity","free.sulfur.dioxide", "quality_degree")]
+summary(df_gam)
+```
+
+#### Split the data into training set and testing set 
+```{r}
+set.seed(13)
+#dim(data)
+training_index=sample(1:dim(df_gam)[1], dim(df_gam)[1]*0.8)
+testing_index=-training_index
+
+training_set=df_gam[training_index, ]
+testing_set=df_gam[testing_index, ]
+# summary(training_set)
+```
+
+#### Find best degree of freedom
+```{r}
+df_parameter=data.frame(model=c(paste("gam", 2:6)), test.accuracy=NA)
+
+for (mydegree in 2:6){
+gam1=gam(I(quality_degree=='Above_Average') ~ s(alcohol,mydegree) + s(volatile.acidity, mydegree)+ s(free.sulfur.dioxide,mydegree), family=binomial, data=training_set)
+# Evaluate the model   
+# Prediction
+pred_gam <- predict(gam1, newdata=testing_set, type="response")
+# Confusion Matrix 
+cm_gam <- as.matrix(table(Actual=testing_set$quality_degree, Predicted=pred_gam > 0.5))
+cm_gam
+# Accuracy
+acc_gam <- sum(cm_gam[,2])/ sum(cm_gam)
+cat("Accuracy: ", acc_gam)
+df_parameter$test.accuracy[mydegree-1]=acc_gam
+}
+
+df_parameter
+```
+
+#### Build GAM model with 3 most important variables 
+```{r}
+gam1=gam(I(quality_degree=='Above_Average') ~ s(alcohol,2) + s(volatile.acidity, 2)+ s(free.sulfur.dioxide,2), family=binomial, data=training_set)
+summary(gam1)
+par(mfrow=c(3,3))
+plot(gam1, se=T, col='red')
+```
+
+#### evaluate the model 
+```{r}
+# Prediction
+pred_gam <- predict(gam1, newdata=testing_set, type="response")
+
+# Confusion Matrix 
+cm_gam <- as.matrix(table(Actual=testing_set$quality_degree, Predicted=pred_gam > 0.5))
+cm_gam
+
+# Accuracy
+acc_gam <- sum(cm_gam[,2])/ sum(cm_gam)
+cat("Accuracy: ", acc_gam)
+```
+
+#### Method 2: Build GAM model with 9 predictors 
+
+
+```{r}
+data = read.csv("wine_white.csv")
+heatmap(cor(data))
+# step 1: resample the data 
+set.seed(213)
+table(data$quality)
+data <- data[sample(1:nrow(data),nrow(data),prob = ifelse(data$quality == c("9","3"), 0.95 , 0.10), replace = TRUE),]
+table(data$quality)
+
+# step 2: split the categorical labels into 2 group: Above_Average and Below_Average
+data = data %>% mutate(quality_degree = case_when(quality >= 6 ~ 'Above_Average', TRUE ~ 'Below_Average'))
+data=data[, c(1:11, 13)]
+data$quality_degree=as.factor(data$quality_degree)
+
+```
+
+#### splid the data into training set and testing set 
+```{r}
+df_gam=data 
+set.seed(13)
+#dim(data)
+training_index=sample(1:dim(df_gam)[1], dim(df_gam)[1]*0.8)
+testing_index=-training_index
+
+training_set=df_gam[training_index, ]
+testing_set=df_gam[testing_index, ]
+# summary(training_set)
+```
+
+# GAM model with 9 features 
+
+```{r}
+df_parameter=data.frame(model=c(paste("gam", 2:6)), test.accuracy=NA)
+
+for (mydegree in 2:6){
+  gam=gam(I(quality_degree=='Above_Average') ~ s(fixed.acidity, mydegree)+s(volatile.acidity, mydegree)+s(citric.acid, mydegree) + s(residual.sugar,mydegree)+s(chlorides,mydegree) +s( free.sulfur.dioxide, mydegree) +s(pH, mydegree) + s(sulphates,mydegree)+s(alcohol,mydegree), family=binomial, data=training_set)
+# Evaluate the model   
+# Prediction
+pred_gam <- predict(gam, newdata=testing_set, type="response")
+# Confusion Matrix 
+cm_gam <- as.matrix(table(Actual=testing_set$quality_degree, Predicted=pred_gam > 0.5))
+cm_gam
+# Accuracy
+acc_gam <- sum(cm_gam[,2])/ sum(cm_gam)
+cat("Accuracy: ", acc_gam)
+df_parameter$test.accuracy[mydegree-1]=acc_gam
+}
+
+df_parameter
+```
+
+```{r}
+gam2=gam(I(quality_degree=='Above_Average') ~ s(fixed.acidity, 2)+s(volatile.acidity, 2)+s(citric.acid, 2) + s(residual.sugar,2)+s(chlorides,2) +s(free.sulfur.dioxide, 2) +s(pH, 2) + s(sulphates,2)+s(alcohol,2), family=binomial, data=training_set)
+
+summary(gam2)
+par(mfrow=c(3,4))
+plot(gam2, se=T, col='red')
+```
+
+#### evaluate the model 
+```{r}
+# Prediction
+pred_gam <- predict(gam2, newdata=testing_set, type="response")
+
+# Confusion Matrix 
+cm_gam <- as.matrix(table(Actual=testing_set$quality_degree, Predicted=pred_gam > 0.5))
+cm_gam
+
+# Accuracy
+acc_gam <- sum(cm_gam[,2])/ sum(cm_gam)
+cat("Accuracy: ", acc_gam)
+```
+
+
+
+### Lasso Regression for Predictor Selection 
+
+
+```{r}
+set.seed(1234)
+wine1 <- read.csv("wine_white.csv")
+wine.df <- as.data.frame(wine1)
+wine1 = wine1 %>% mutate(quality = as.factor(quality))
+table(wine1$quality)
+### we can see there the data is imbalanced.
+### to deal with this data imbalance we will use oversampling 
+wine1 <- wine1[sample(1:nrow(wine1),nrow(wine1),prob = ifelse(wine$quality == c("9","3"), 0.95 , 0.10), replace = TRUE),]
+table(wine1$quality)
+
+
+train_index = sample(1: nrow(wine1),0.8*nrow(wine1))
+train = wine1[train_index,]
+test = wine1[-train_index,]
+```
+
+```{r}
+###Lasso Regression to do predictor selection 
+
+x = model.matrix(quality ~. , wine1)
+y = wine1$quality
+y.test = y[-train_index]
+x.test = x[-train_index,]
+y.train = y[train_index]
+x.train = x[train_index,]
+lasso.mod=glmnet(x.train,y.train,alpha=1,family = "multinomial",type.measure = "class")
+plot(lasso.mod)
+
+```
+
+```{r}
+set.seed(2111)
+cv.out=cv.glmnet(x.train , y.train ,alpha=1 ,family = "multinomial",type.measure = "class")
+plot(cv.out)
+bestlam =cv.out$lambda.min
+lasso.pred=predict (lasso.mod ,s= bestlam ,newx=x.test)
+mean((lasso.pred -y.test)^2)
+out=glmnet(x , y,alpha=1,family = "multinomial",type.measure = "class")
+lasso.coef=predict (out ,type="coefficients",s=bestlam)
+lasso.coef
+######for each class 
+```
+
+```{r}
+
+##### knn
+list.k = c(1:20)
+res.acc = c()
+for (val in list.k) {
+  knn.pred=knn(x.train,x.test,y.train ,k=val)
+  acc = mean(knn.pred == y.test)
+  res.acc[val] = acc
+}
+plot(list.k,res.acc)
+res.acc[1]
+###according to the graph, we should use k = 1 as the paremeter for the knn method which accuracy is 0.787755
+
+```
+
+### SVM
+
+```{r}
+#split data
+library(caret)
+set.seed(22202)
+train=createDataPartition(wine$quality, p = 0.7, list = FALSE) 
+test =-train
+winetrain = wine[train,]
+winetest =wine[test,]
+X.train = wine[train,1:11]
+Y.train =wine[train,12]
+X.test = wine[test,1:11] 
+Y.test = wine[test,12]
+```
+
+
+```{r}
+#svm
+#kernal=radial
+library(e1071)
+svm_model= svm(quality ~ . , data = winetrain,kernel='radial')
+svm_result = predict(svm_model, newdata = winetest[,!colnames(winetest) %in% c("quality")])
+confusionMatrix(svm_result, winetest$quality)
+#kernal=sigmoid
+svm_model1= svm(quality ~ . , data = winetrain,kernel='sigmoid')
+svm_result1 = predict(svm_model1, newdata = winetest[,!colnames(winetest) %in% c("quality")])
+confusionMatrix(svm_result1, winetest$quality)
+#kernal=poly
+svm_model2= svm(quality ~ . , data = winetrain,kernel='polynomial')
+svm_result2 = predict(svm_model2, newdata = winetest[,!colnames(winetest) %in% c("quality")])
+confusionMatrix(svm_result2, winetest$quality)
+#kernal=linear
+svm_model3= svm(quality ~ . , data = winetrain,kernel='linear')
+svm_result3 = predict(svm_model3, newdata = winetest[,!colnames(winetest) %in% c("quality")])
+confusionMatrix(svm_result3, winetest$quality)
+```
+
+### Multinomial Logidtic Regression Model
+
+```{r}
+#multinomial logistic regression model
+library(nnet)
+str(winetrain)
+```
+
+```{r}
+multinomModel=multinom(quality ~ ., data = winetrain)
+summary(multinomModel)
+```
+
+```{r}
+#predict
+predict_class=predict(multinomModel,winetest)
+#Misclassification error
+cm = table(predict_class, winetest$quality) 
+confusionMatrix(predict_class, winetest$quality)
+```
+
+```{r}
+#multinomial logistic regression model using mlogit()
+library(mlogit)
+H <- mlogit.data(winetrain, choice = "quality", shape = "wide")
+mlogitmodel <- mlogit(quality ~ 1 | fixed.acidity + volatile.acidity + citric.acid + residual.sugar + chlorides + free.sulfur.dioxide + total.sulfur.dioxide + density + pH + sulphates + alcohol, data = H)
+
+mlogitmodel
+summary(mlogitmodel)
+
+##Look at percent correct
+correct <- mlogitmodel$probabilities
+binarycorrect <- colnames(correct)[apply(correct,1,which.max)] 
+table(winetrain$quality,binarycorrect)
+```
+
+
+
+
+
+
